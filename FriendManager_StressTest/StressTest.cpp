@@ -3,23 +3,24 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <Ws2tcpip.h>
+#include <list>
 
 #include "Protocol.h"
 #include "StreamQueue.h"
 #include "NPacket.h"
 #include "StressTest.h"
 
+
 #pragma comment(lib, "Ws2_32.lib")
 
 stClient *pClient[MAX_CLIENT];
+list<FD_SET *>		Readlist;
+list<FD_SET *>		Writelist;
 
 void main()
 {
-	if (!InitNetwork())
-		return;
-
-	if (!Connection())
-		return;
+	if (!InitNetwork())		return;
+	if (!Connection())		return;
 
 	SendPacket();
 }
@@ -81,25 +82,55 @@ BOOL Connection()
 	return TRUE;
 }
 
+/*
+일단 패킷 보내고
+받은거 검사후 맞으면 또 보냄
+아니면 끊어야됨
+*/
 void SendPacket()
 {
+	int retval;
+	int iSockCount;
+
+	FD_SET *ReadSet;
+	FD_SET *WriteSet;
+
 	while (1){
-		FD_SET ReadSet, WriteSet;
+		iSockCount = 0;
 
-		FD_ZERO(&ReadSet);
-		FD_ZERO(&WriteSet);
+		ReadSet = new FD_SET;
+		WriteSet = new FD_SET;
 
-		//-----------------------------------------------------------------------------------
-		// Socket을 ReadSet, WriteSet에 등록
-		//-----------------------------------------------------------------------------------
-		for (aIter = g_lAccount.begin(); aIter != g_lAccount.end(); ++aIter)
+		Readlist.push_back(ReadSet);
+		Writelist.push_back(WriteSet);
+
+		FD_ZERO(ReadSet);
+		FD_ZERO(WriteSet);
+
+		iSockCount++;
+
+		for (int iCnt = 0; iCnt < MAX_CLIENT; iCnt++)
 		{
-			if ((*aIter)->sock != INVALID_SOCKET){
-				if ((*aIter)->SendQ.GetUseSize() > 0)
-					FD_SET((*aIter)->sock, &WriteSet);
+			if (iSockCount > 64)
+			{
+				ReadSet = new FD_SET;
+				WriteSet = new FD_SET;
 
-				FD_SET((*aIter)->sock, &ReadSet);
+				Readlist.push_back(ReadSet);
+				Writelist.push_back(WriteSet);
+
+				FD_ZERO(ReadSet);
+				FD_ZERO(WriteSet);
+
+				iSockCount = 0;
 			}
+
+			if (pClient[iCnt]->SendQ.GetUseSize() > 0)
+				FD_SET(pClient[iCnt]->sock, WriteSet);
+
+			FD_SET(pClient[iCnt]->sock, ReadSet);
+
+			iSockCount++;
 		}
 
 		TIMEVAL Time;
@@ -109,29 +140,63 @@ void SendPacket()
 		//-----------------------------------------------------------------------------------
 		// Select
 		//-----------------------------------------------------------------------------------
-		retval = select(0, &ReadSet, &WriteSet, NULL, &Time);
+		list<FD_SET *>::iterator ReadIter = Readlist.begin();
+		list<FD_SET *>::iterator WriteIter = Writelist.begin();
 
-		if (retval == 0)		return;
+		for (int iCnt = 0; iCnt < Readlist.size() || iCnt < Writelist.size(); iCnt++){
+			retval = select(0, (*ReadIter), (*WriteIter), NULL, &Time);
 
-		else if (retval < 0)
-		{
-			DWORD dwError = GetLastError();
-			wprintf(L"Select() Error : %d\n", dwError);
-			exit(1);
-		}
+			if (retval == 0)		break;
 
-		else
-		{
-			//-------------------------------------------------------------------------------
-			// Accept 처리
-			//-------------------------------------------------------------------------------
-			if (FD_ISSET(listen_sock, &ReadSet))
-				AcceptClient();
-			//-------------------------------------------------------------------------------
-			// Socket 처리
-			//-------------------------------------------------------------------------------
+			else if (retval < 0)
+			{
+				DWORD dwError = GetLastError();
+				wprintf(L"Select() Error : %d\n", dwError);
+				exit(1);
+			}
+
 			else
-				SocketProc(ReadSet, WriteSet);
+			{
+				//-------------------------------------------------------------------------------
+				// Socket 처리
+				//-------------------------------------------------------------------------------
+				SocketProc((*ReadIter), (*WriteIter));
+			}
 		}
+
+		for (ReadIter = Readlist.begin(); ReadIter != Readlist.end(); ++ReadIter)
+			delete (*ReadIter);
+
+		for (WriteIter = Writelist.begin(); WriteIter != Writelist.end(); ++WriteIter)
+			delete (*WriteIter);
+
+		Readlist.clear();
+		Writelist.clear();
 	}
+}
+
+void SocketProc(FD_SET *ReadIter, FD_SET *WriteIter)
+{
+
+}
+
+BOOL packetProc_ResStressEcho(stClient *pClient, CNPacket *cPacket)
+{
+
+}
+
+BOOL sendProc_ReqStressEcho(stClient *pClient, WORD wSize, WCHAR *wText)
+{
+
+}
+
+void makePacket_ReqStressEcho(st_PACKET_HEADER *header, CNPacket *cPacket,
+	WORD wSize, WCHAR *wText)
+{
+
+}
+
+void makeEchoString()
+{
+
 }
